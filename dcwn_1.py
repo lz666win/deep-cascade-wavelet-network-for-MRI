@@ -96,7 +96,6 @@ def DC_block_2c(rec,mask,sampled_kspace):
     # else:
     rec_kspace = Lambda(fft_layer)(rec)
     rec_kspace_dc = Lambda(lambda rec_kspace : rec_kspace*mask)(rec_kspace)
-#     rec_kspace_dc =  Multiply()([rec_kspace,mask])
     rec_kspace_dc = Add()([rec_kspace_dc,sampled_kspace])
     return rec_kspace_dc
 def cnn_block_02(cnn_input, depth, nf, kshape):
@@ -116,7 +115,7 @@ def cnn_block_02(cnn_input, depth, nf, kshape):
     final_conv = Conv2D(2, (1, 1), activation='linear')(layers[-1])
     rec1 = Add()([final_conv,cnn_input])
     return rec1
-def squeeze_excite_block(input, ratio=4):
+def squeeze_excite_block(input, ratio=8):
     init = input
     channel_axis = 1 if K.image_data_format() == "channels_first" else -1
     filters = init._keras_shape[channel_axis]
@@ -155,25 +154,44 @@ def uca_block(cnn_input, nf, kshape):
     x3 = Conv2D(nf*4, kshape, activation=LeakyReLU(alpha=0.2), padding='same')(pool2)
     x3 = Conv2D(nf*4, kshape, activation=LeakyReLU(alpha=0.2), padding='same')(x3)
     x3 = Conv2D(nf*4, kshape, activation=LeakyReLU(alpha=0.2), padding='same')(x3)
-    x3 =squeeze_excite_block(x3)
+    x3 =CA_layer_relu(x3)
     up1 =UpSampling2D()(x3)
     up1 = Conv2D(nf * 2, kshape, activation=LeakyReLU(alpha=0.2), padding='same')(up1)
     x4 =concatenate([up1, x2], axis=-1)
     x4 = Conv2D(nf, kshape, activation=LeakyReLU(alpha=0.2), padding='same')(x4)
     x4 = Conv2D(nf, kshape, activation=LeakyReLU(alpha=0.2), padding='same')(x4)
     x4 = Conv2D(nf, kshape, activation=LeakyReLU(alpha=0.2), padding='same')(x4)
-    x4 = squeeze_excite_block(x4)
+    x4 = CA_layer_relu(x4)
     up2 = UpSampling2D()(x4)
     up2 = Conv2D(nf , kshape, activation=LeakyReLU(alpha=0.2), padding='same')(up2)
     x5 = concatenate([up2, x1], axis=-1)
     x5 = Conv2D(nf, kshape, activation=LeakyReLU(alpha=0.2), padding='same')(x5)
     x5 = Conv2D(nf, kshape, activation=LeakyReLU(alpha=0.2), padding='same')(x5)
     x5 = Conv2D(nf, kshape, activation=LeakyReLU(alpha=0.2), padding='same')(x5)
-    x5 = squeeze_excite_block(x5)
+    x5 = CA_layer_relu(x5)
     final_conv = Conv2D(2, (1, 1), activation='linear')(x5)
     rec1 = Add()([final_conv, cnn_input])
     return rec1
-    
+
+def CA_layer_relu(input, ratio=8):
+    init = input
+    channel_axis = 1 if K.image_data_format() == "channels_first" else -1
+    filters = init._keras_shape[channel_axis]
+    se_shape = (1, 1, filters)
+
+    se = GlobalAveragePooling2D()(init)
+    se = Reshape(se_shape)(se)
+    print('se1 shepe', se.shape)
+    se = Conv2D(filters // ratio, (1, 1), activation='relu')(se)
+    print('se2 shepe', se.shape)
+    se = Conv2D(filters, (1, 1), activation='sigmoid')(se)
+    print('se3 shepe', se.shape)
+
+    if K.image_data_format() == 'channels_first':
+        se = Permute((3, 1, 2))(se)
+
+    # x = multiply([init, se])
+    return multiply([input, se])
     
 def wnet_cca_cscasde_5_32(mu1, sigma1, mu2, sigma2, mask, H=256, W=256, channels=2, kshape=(3, 3), kshape2=(3, 3)):
     #  model of CCA
@@ -181,8 +199,7 @@ def wnet_cca_cscasde_5_32(mu1, sigma1, mu2, sigma2, mask, H=256, W=256, channels
     inputs1 = Lambda(lambda inputs: (inputs * sigma1 + mu1))(inputs)
     ifft1 = Lambda(ifft_layer_2c)(inputs1)
     ifft1 = Lambda(lambda ifft1: (ifft1 - mu2) / sigma2)(ifft1)
-    #     kspace_flag = False
-    # cnk1 = cnn_block_02(inputs1, 3, 32, kshape2) #k空间网络第一级
+
 
     cn1 = uca_block(ifft1, 32, kshape2)
     print('cn1', cn1.shape)
@@ -345,48 +362,48 @@ def ddd_c10d10_32_dense_block_ca1d_dwt_noshortcut01_cartfirst(mu1, sigma1, mu2, 
     # ifft1 = Lambda(lambda ifft2: (ifft2 - mu2) / sigma2)(ifft1)
     cni1 = cnn_block_02_dense_block_5stage_ca1d_dwt_noshortcut01(ifft1,  32, kshape2) #图像空间网络第一级
     print('cn1', cni1.shape)
-    dci1 = DC_block_2c_i(cni1, mask, inputs1) #这个输出均为image
+    dci1 = DC_block_2c_i(cni1, mask, inputs1)
     
     cni2 =cnn_block_02_2in_dense_block_5stage_ca1d_dwt_noshort01_catfirst(concatenate([dci1, ifft1], axis=-1),  32, kshape2)
     print('cn2', cni2.shape)
-    dci2 = DC_block_2c_i(cni2, mask, inputs1)  # 这个输出均为image
+    dci2 = DC_block_2c_i(cni2, mask, inputs1)
 
     cni3 = cnn_block_02_2in_dense_block_5stage_ca1d_dwt_noshort01_catfirst(concatenate([dci1, ifft1,dci2], axis=-1),  32, kshape2)
     print('cn3', cni3.shape)
-    dci3 = DC_block_2c_i(cni3, mask, inputs1)  # 这个输出均为image
+    dci3 = DC_block_2c_i(cni3, mask, inputs1)
 
     cni4 = cnn_block_02_2in_dense_block_5stage_ca1d_dwt_noshort01_catfirst(concatenate([dci1, ifft1,dci2,dci3], axis=-1), 32, kshape2)
     print('cn4', cni4.shape)
-    dci4 = DC_block_2c_i(cni4, mask, inputs1)  # 这个输出均为image
+    dci4 = DC_block_2c_i(cni4, mask, inputs1)
 
     cni5 = cnn_block_02_2in_dense_block_5stage_ca1d_dwt_noshort01_catfirst(concatenate([dci1, ifft1,dci2,dci3,dci4], axis=-1),  32, kshape2)
     print('cn5', cni5.shape)
-    dci5 = DC_block_2c_i(cni5, mask, inputs1)  # 这个输出均为image
+    dci5 = DC_block_2c_i(cni5, mask, inputs1)
 
     cni6 =cnn_block_02_2in_dense_block_5stage_ca1d_dwt_noshort01_catfirst(concatenate([dci1, ifft1,dci2,dci3,dci4,dci5], axis=-1),  32, kshape2)
     print('cn6', cni6.shape)
-    dci6 = DC_block_2c_i(cni6, mask, inputs1)  # 这个输出均为image
+    dci6 = DC_block_2c_i(cni6, mask, inputs1)
 
     cni7 = cnn_block_02_2in_dense_block_5stage_ca1d_dwt_noshort01_catfirst(concatenate([dci1, ifft1,dci2,dci3,dci4,dci5,dci6], axis=-1),32, kshape2)
     print('cn7', cni7.shape)
-    dci7 = DC_block_2c_i(cni7, mask, inputs1)  # 这个输出均为image
+    dci7 = DC_block_2c_i(cni7, mask, inputs1)
  
     cni8 = cnn_block_02_2in_dense_block_5stage_ca1d_dwt_noshort01_catfirst(concatenate([dci1, ifft1,dci2,dci3,dci4,dci5,dci6,dci7], axis=-1),  32, kshape2)
     print('cn8', cni8.shape)
-    dci8 = DC_block_2c_i(cni5, mask, inputs1)  # 这个输出均为image
+    dci8 = DC_block_2c_i(cni5, mask, inputs1)
 
 
     cni9 = cnn_block_02_2in_dense_block_5stage_ca1d_dwt_noshort01_catfirst(concatenate([dci1, ifft1,dci2,dci3,dci4,dci5,dci6,dci7,dci8], axis=-1),  32, kshape2)
     print('cn9', cni9.shape)
-    dci9 = DC_block_2c_i(cni9, mask, inputs1)  # 这个输出均为image
+    dci9 = DC_block_2c_i(cni9, mask, inputs1)
 
 
     cni10 = cnn_block_02_2in_dense_block_5stage_ca1d_dwt_noshort01_catfirst(concatenate([dci1, ifft1,dci2,dci3,dci4,dci5,dci6,dci7,dci8,dci9], axis=-1),  32, kshape2)
     print('cn10', cni10.shape)
-    dci10 = DC_block_2c_i(cni10, mask, inputs1)  # 这个输出均为image
+    dci10 = DC_block_2c_i(cni10, mask, inputs1)
 
 
-    fft6 = Lambda(fft_layer)(dci10)  # 这个输出为k空间
+    fft6 = Lambda(fft_layer)(dci10)
 
 
     res1_scaled=fft6
