@@ -16,4 +16,4 @@ make a folder: Test, then put e14498s5_P60928.7.npy into this folder.
 
 make a folder: Models, then put 3 .hdf5 files into this folder.
 
-make a folder: Data, Then you can run test_calgary_campinas_cart_5.ipynb to test it.
+make a folder: Data, put stats_fs_unet_norm_2c_2020.npy into this folder,then you can run test_calgary_campinas_cart_5.ipynb to see results.
