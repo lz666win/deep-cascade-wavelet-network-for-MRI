@@ -12,7 +12,7 @@ you should download the data, then located them to the corresponding folder.
 
 How to use:
 
-make a folder: Test, then put e14498s5_P60928.7.npy into this folder.
+make a folder: Test, then put e14498s5_P60928.7.npy (one of patient in the calgary-campinas-dataset) into this folder.
 
 make a folder: Models, then put 3 .hdf5 files into this folder.
 
